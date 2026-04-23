@@ -40,6 +40,7 @@ class TestParseArgs:
         assert args.write_timeout == 180.0
         assert args.tool_timeout == 300.0
         assert args.disable_telemetry is False
+        assert args.enable_credential_tool is False
 
     @patch(
         'sys.argv',
@@ -202,3 +203,19 @@ class TestParseArgs:
         args = parse_args()
 
         assert args.disable_telemetry is False
+
+    @patch(
+        'sys.argv', ['mcp-proxy-for-aws', 'https://test.example.com', '--enable-credential-tool']
+    )
+    def test_parse_args_enable_credential_tool_flag(self):
+        """Test that --enable-credential-tool flag sets enable_credential_tool to True."""
+        args = parse_args()
+
+        assert args.enable_credential_tool is True
+
+    @patch('sys.argv', ['mcp-proxy-for-aws', 'https://test.example.com'])
+    def test_parse_args_enable_credential_tool_default(self):
+        """Test that enable_credential_tool defaults to False when flag is not provided."""
+        args = parse_args()
+
+        assert args.enable_credential_tool is False

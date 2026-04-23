@@ -174,4 +174,10 @@ Examples:
         help='Disables telemetry data collection',
     )
 
+    parser.add_argument(
+        '--enable-credential-tool',
+        action='store_true',
+        help='Enable the use_aws_profile tool for switching AWS profiles at runtime',
+    )
+
     return parser.parse_args()

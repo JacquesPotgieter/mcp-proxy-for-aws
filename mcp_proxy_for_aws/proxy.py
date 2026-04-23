@@ -125,3 +125,16 @@ class AWSMCPProxyClientFactory:
                 await self._client._disconnect(force=True)
         except Exception:
             logger.exception('Failed to disconnect client.')
+
+    async def reconfigure(self, transport: ClientTransport) -> None:
+        """Replace the transport and reset the client for reconnection.
+
+        Disconnects the existing client, swaps the transport, and clears
+        the cached client so the next get_client() creates a fresh one.
+
+        Args:
+            transport: The new transport to use.
+        """
+        await self.disconnect()
+        self._transport = transport
+        self._client = None

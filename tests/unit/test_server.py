@@ -22,6 +22,7 @@ from mcp_proxy_for_aws.server import (
     parse_args,
     run_proxy,
 )
+from mcp_proxy_for_aws.credential_tool import register_credential_tool
 from mcp_proxy_for_aws.sigv4_helper import SessionHolder, create_sigv4_client
 from mcp_proxy_for_aws.utils import determine_service_name
 from unittest.mock import AsyncMock, Mock, patch
@@ -448,3 +449,161 @@ class TestServer:
                 server_module.main()
             # Since we're not actually running as __main__, we just verify the structure exists
             assert mock_main.call_count == 0  # Should not be called in test context
+
+
+class TestCredentialToolRegistration:
+    """Tests for credential tool registration in server."""
+
+    @patch('mcp_proxy_for_aws.server.AWSMCPProxyClientFactory')
+    @patch('mcp_proxy_for_aws.server.create_transport_with_sigv4')
+    @patch('mcp_proxy_for_aws.server.FastMCPProxy')
+    @patch('mcp_proxy_for_aws.server.determine_aws_region')
+    @patch('mcp_proxy_for_aws.server.determine_service_name')
+    @patch('mcp_proxy_for_aws.server.add_tool_filtering_middleware')
+    async def test_credential_tool_registered_when_enabled(
+        self,
+        mock_add_filtering,
+        mock_determine_service,
+        mock_determine_region,
+        mock_fastmcp_proxy,
+        mock_create_transport,
+        mock_client_factory_class,
+    ):
+        """Test that use_aws_profile tool is registered when flag is enabled."""
+        mock_args = Mock()
+        mock_args.endpoint = 'https://test.example.com'
+        mock_args.service = 'test-service'
+        mock_args.region = 'us-east-1'
+        mock_args.profile = None
+        mock_args.read_only = False
+        mock_args.retries = 0
+        mock_args.metadata = None
+        mock_args.timeout = 180.0
+        mock_args.connect_timeout = 60.0
+        mock_args.read_timeout = 120.0
+        mock_args.write_timeout = 180.0
+        mock_args.log_level = 'ERROR'
+        mock_args.tool_timeout = 300.0
+        mock_args.disable_telemetry = False
+        mock_args.enable_credential_tool = True
+
+        mock_determine_service.return_value = 'test-service'
+        mock_determine_region.return_value = 'us-east-1'
+
+        mock_transport = Mock(spec=ClientTransport)
+        mock_create_transport.return_value = mock_transport
+
+        mock_client_factory = Mock()
+        mock_client_factory.disconnect = AsyncMock()
+        mock_client_factory_class.return_value = mock_client_factory
+
+        mock_proxy = Mock()
+        mock_proxy.run_async = AsyncMock()
+        mock_proxy.add_middleware = Mock()
+        mock_proxy.tool = Mock(return_value=lambda fn: fn)
+        mock_fastmcp_proxy.return_value = mock_proxy
+
+        await run_proxy(mock_args)
+
+        tool_calls = [c.kwargs['name'] for c in mock_proxy.tool.call_args_list]
+        assert 'list_aws_profiles' in tool_calls
+        assert 'use_aws_profile' in tool_calls
+
+    @patch('mcp_proxy_for_aws.server.AWSMCPProxyClientFactory')
+    @patch('mcp_proxy_for_aws.server.create_transport_with_sigv4')
+    @patch('mcp_proxy_for_aws.server.FastMCPProxy')
+    @patch('mcp_proxy_for_aws.server.determine_aws_region')
+    @patch('mcp_proxy_for_aws.server.determine_service_name')
+    @patch('mcp_proxy_for_aws.server.add_tool_filtering_middleware')
+    async def test_credential_tool_not_registered_when_disabled(
+        self,
+        mock_add_filtering,
+        mock_determine_service,
+        mock_determine_region,
+        mock_fastmcp_proxy,
+        mock_create_transport,
+        mock_client_factory_class,
+    ):
+        """Test that use_aws_profile tool is NOT registered when flag is disabled."""
+        mock_args = Mock()
+        mock_args.endpoint = 'https://test.example.com'
+        mock_args.service = 'test-service'
+        mock_args.region = 'us-east-1'
+        mock_args.profile = None
+        mock_args.read_only = False
+        mock_args.retries = 0
+        mock_args.metadata = None
+        mock_args.timeout = 180.0
+        mock_args.connect_timeout = 60.0
+        mock_args.read_timeout = 120.0
+        mock_args.write_timeout = 180.0
+        mock_args.log_level = 'ERROR'
+        mock_args.tool_timeout = 300.0
+        mock_args.disable_telemetry = False
+        mock_args.enable_credential_tool = False
+
+        mock_determine_service.return_value = 'test-service'
+        mock_determine_region.return_value = 'us-east-1'
+
+        mock_transport = Mock(spec=ClientTransport)
+        mock_create_transport.return_value = mock_transport
+
+        mock_client_factory = Mock()
+        mock_client_factory.disconnect = AsyncMock()
+        mock_client_factory_class.return_value = mock_client_factory
+
+        mock_proxy = Mock()
+        mock_proxy.run_async = AsyncMock()
+        mock_proxy.add_middleware = Mock()
+        mock_fastmcp_proxy.return_value = mock_proxy
+
+        await run_proxy(mock_args)
+
+        mock_proxy.tool.assert_not_called()
+
+    @patch('mcp_proxy_for_aws.credential_tool.boto3.Session')
+    async def test_credential_tool_invocation_reconfigures(self, mock_session_cls):
+        """Test that calling the tool triggers reconfiguration."""
+        mock_session = Mock()
+        mock_session.region_name = 'eu-west-1'
+        mock_session.get_credentials.return_value = None
+        mock_session.available_profiles = ['default', 'prod']
+        mock_session_cls.return_value = mock_session
+
+        mock_proxy = Mock()
+        registered_fn = None
+
+        def capture_tool(**kwargs):
+            def decorator(fn):
+                nonlocal registered_fn
+                if kwargs.get('name') == 'use_aws_profile':
+                    registered_fn = fn
+                return fn
+
+            return decorator
+
+        mock_proxy.tool = capture_tool
+
+        mock_client_factory = Mock()
+        mock_client_factory.reconfigure = AsyncMock()
+
+        mock_args = Mock()
+        mock_args.endpoint = 'https://test.example.com'
+        mock_args.disable_telemetry = False
+
+        timeout = Mock()
+
+        with patch('mcp_proxy_for_aws.server.create_transport_with_sigv4') as mock_create:
+            mock_create.return_value = Mock()
+            register_credential_tool(
+                mock_proxy, mock_client_factory, mock_args, 'svc', 'us-east-1', {}, timeout
+            )
+
+        assert registered_fn is not None
+
+        with patch('mcp_proxy_for_aws.server.create_transport_with_sigv4') as mock_create:
+            mock_create.return_value = Mock()
+            result = await registered_fn(profile='prod')
+
+        mock_client_factory.reconfigure.assert_called_once()
+        assert 'prod' in result

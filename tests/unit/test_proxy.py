@@ -237,3 +237,39 @@ async def test_proxy_client_max_connect_retry_default():
     mock_transport = Mock(spec=ClientTransport)
     client = AWSMCPProxyClient(mock_transport)
     assert client._max_connect_retry == 3
+
+
+@pytest.mark.asyncio
+async def test_client_factory_reconfigure_disconnects_and_replaces():
+    """Test reconfigure disconnects old client and replaces transport."""
+    old_transport = Mock(spec=ClientTransport)
+    new_transport = Mock(spec=ClientTransport)
+    factory = AWSMCPProxyClientFactory(old_transport)
+
+    mock_client = Mock()
+    mock_client._disconnect = AsyncMock()
+    factory._client = mock_client
+
+    await factory.reconfigure(new_transport)
+
+    mock_client._disconnect.assert_called_once_with(force=True)
+    assert factory._transport is new_transport
+    assert factory._client is None
+
+
+@pytest.mark.asyncio
+async def test_client_factory_reconfigure_creates_fresh_client():
+    """Test get_client after reconfigure returns new client with new transport."""
+    old_transport = Mock(spec=ClientTransport)
+    new_transport = Mock(spec=ClientTransport)
+    factory = AWSMCPProxyClientFactory(old_transport)
+
+    # Set up an existing client
+    old_client = await factory.get_client()
+    assert factory._client is old_client
+
+    await factory.reconfigure(new_transport)
+
+    new_client = await factory.get_client()
+    assert new_client is not old_client
+    assert factory._transport is new_transport

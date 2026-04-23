@@ -110,3 +110,48 @@ async def test_on_initialize_skips_connect_for_special_clients(client_name):
 
     mock_client._connect.assert_not_called()
     mock_call_next.assert_called_once_with(mock_context)
+
+
+@pytest.mark.asyncio
+async def test_on_initialize_graceful_startup_continues_on_connect_failure():
+    """Test that graceful_startup=True allows proxy to start when connection fails."""
+    mock_client = Mock()
+    mock_client._connect = AsyncMock(side_effect=Exception('Connection failed'))
+
+    mock_factory = Mock()
+    mock_factory.set_init_params = Mock()
+    mock_factory.get_client = AsyncMock(return_value=mock_client)
+
+    middleware = InitializeMiddleware(mock_factory, graceful_startup=True)
+
+    mock_context = Mock()
+    mock_context.message = create_initialize_request('test-client')
+
+    mock_call_next = AsyncMock()
+
+    # Should NOT raise — graceful startup catches the error
+    await middleware.on_initialize(mock_context, mock_call_next)
+
+    mock_client._connect.assert_called_once()
+    mock_call_next.assert_called_once_with(mock_context)
+
+
+@pytest.mark.asyncio
+async def test_on_initialize_graceful_false_still_raises():
+    """Test that graceful_startup=False (default) still raises on connect failure."""
+    mock_client = Mock()
+    mock_client._connect = AsyncMock(side_effect=Exception('Connection failed'))
+
+    mock_factory = Mock()
+    mock_factory.set_init_params = Mock()
+    mock_factory.get_client = AsyncMock(return_value=mock_client)
+
+    middleware = InitializeMiddleware(mock_factory, graceful_startup=False)
+
+    mock_context = Mock()
+    mock_context.message = create_initialize_request('test-client')
+
+    mock_call_next = AsyncMock()
+
+    with pytest.raises(Exception, match='Connection failed'):
+        await middleware.on_initialize(mock_context, mock_call_next)

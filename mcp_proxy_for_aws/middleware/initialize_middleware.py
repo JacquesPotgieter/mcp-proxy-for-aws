@@ -26,10 +26,19 @@ logger = logging.getLogger(__name__)
 class InitializeMiddleware(Middleware):
     """Intercept MCP initialize request and initialize the proxy client."""
 
-    def __init__(self, client_factory: AWSMCPProxyClientFactory) -> None:
-        """Create a middleware with client factory."""
+    def __init__(
+        self, client_factory: AWSMCPProxyClientFactory, graceful_startup: bool = False
+    ) -> None:
+        """Create a middleware with client factory.
+
+        Args:
+            client_factory: The client factory to initialize.
+            graceful_startup: If True, connection failures during initialize are
+                logged as warnings instead of crashing the proxy.
+        """
         super().__init__()
         self._client_factory = client_factory
+        self._graceful_startup = graceful_startup
 
     @override
     async def on_initialize(
@@ -58,7 +67,18 @@ class InitializeMiddleware(Middleware):
                 # Luckily, q cli calls list tool immediately after being connected to a mcp server
                 # the list_tool call will require the client to be connected again, so the mcp error
                 # will be displayed in the q cli logs.
-                await client._connect()
+                try:
+                    await client._connect()
+                except Exception:
+                    if self._graceful_startup:
+                        logger.warning(
+                            'Downstream connection failed during initialize. '
+                            'Proxy will start without downstream tools. '
+                            'Use use_aws_profile tool to reconnect.',
+                            exc_info=True,
+                        )
+                    else:
+                        raise
             return await call_next(context)
         except Exception:
             logger.exception('Initialize failed in middleware.')

@@ -31,6 +31,7 @@ from fastmcp.server.providers.proxy import FastMCPProxy
 from fastmcp.server.server import FastMCP
 from mcp_proxy_for_aws import __version__
 from mcp_proxy_for_aws.cli import parse_args
+from mcp_proxy_for_aws.credential_tool import register_credential_tool
 from mcp_proxy_for_aws.logging_config import configure_logging
 from mcp_proxy_for_aws.middleware.initialize_middleware import InitializeMiddleware
 from mcp_proxy_for_aws.middleware.tool_error_middleware import ToolErrorMiddleware
@@ -98,13 +99,20 @@ async def run_proxy(args) -> None:
                 'This proxy handles authentication and request routing to the appropriate backend services.'
             ),
         )
-        proxy.add_middleware(InitializeMiddleware(client_factory))
+        graceful = getattr(args, 'enable_credential_tool', False) is True
+        proxy.add_middleware(InitializeMiddleware(client_factory, graceful_startup=graceful))
         add_tool_error_middleware(proxy, args.tool_timeout)
         add_logging_middleware(proxy, args.log_level)
         add_tool_filtering_middleware(proxy, args.read_only)
 
         if args.retries:
             add_retry_middleware(proxy, args.retries)
+
+        if graceful:
+            register_credential_tool(
+                proxy, client_factory, args, service, region, metadata, timeout
+            )
+
         await proxy.run_async(transport='stdio', show_banner=False, log_level=args.log_level)
     except Exception as e:
         logger.error('Cannot start proxy server: %s', e)
